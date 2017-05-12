@@ -6,10 +6,9 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 
-import database
+import holding_generate
 
-
-def take_holding_fmt(dbdir,divdir,product,date,outdir):
+def take_holding_fmt(dbdir,divdir,product,date):
     # 提取分红数据
     with open(divfile,'r') as df:
         stkcd = []
@@ -38,7 +37,7 @@ def take_holding_fmt(dbdir,divdir,product,date,outdir):
     div = pd.DataFrame({'stkcd':stkcd, 'share':share, 'cash':cash})
 
     # 提取持仓数据
-    with database.DatabaseConnect(dbdir) as conn:
+    with holding_generate.DatabaseConnect(dbdir) as conn:
         #tables = conn.execute(' SELECT name FROM sqlite_master WHERE type=\'table\' ').fetchall()
         tablename = product+'_'+date
         cols = conn.execute('PRAGMA table_info('+tablename+'_afternoon )').fetchall()
@@ -55,9 +54,9 @@ def take_holding_fmt(dbdir,divdir,product,date,outdir):
         holdings = pd.read_sql(exeline,conn)
         holdings.columns = ['stkcd','num','prc']
         if product == 'ls1':
-            asset = float( open(r'E:\calc_dividend\holding_gen\ls1_value.txt').readline() )
+            asset = float( open(''.join([r'E:\calc_dividend\holding_gen\ls1_value_',date,'.txt'])).readline())
         elif product == 'bq1':
-            asset = float( open(r'E:\calc_dividend\holding_gen\bq1_value.txt').readline() )
+            asset = float( open(''.join([r'E:\calc_dividend\holding_gen\bq1_value_',date,'.txt'])).readline())
         else:
             exeline = ''.join(['SELECT 资产 FROM ',tablename+'_afternoon_summary'])
             asset = conn.execute(exeline).fetchall()[0][0]
@@ -74,7 +73,12 @@ def take_holding_fmt(dbdir,divdir,product,date,outdir):
     newcd = [cd.split('.')[0] for cd in holdings['stkcd'].tolist()]
     holdings['stkcd'] = newcd
     # 剔除非股票持仓和零持仓代码
-    holdings = holdings[~ holdings['stkcd'].isin(['131990','888880','SHRQ88','SHXGED','SZRQ88','SZXGED'])]
+    # 逆回购 理财产品等
+    refound_sz = ['131810','131811','131800','131809','131801','131802','131803','131805','131806']
+    refound_sh = ['204001','204007','204002','204003','204004','204014','204028','204091','204182']
+    other_vars = ['131990','888880','SHRQ88','SHXGED','SZRQ88','SZXGED']
+    tofilter = refound_sz+refound_sh+other_vars
+    holdings = holdings[~ holdings['stkcd'].isin(tofilter)]
     holdings = holdings[holdings['num']>0]
     # 计算现金量
     cashamt = (asset - np.sum(holdings['num']*holdings['prc'])) * 0.95
@@ -83,7 +87,8 @@ def take_holding_fmt(dbdir,divdir,product,date,outdir):
     holdings['stkcd'] = holdings['stkcd'].map(lambda x : float(x))
     # 转换代码类型并排序
     holdings = holdings.sort_values(by=['stkcd'],ascending=[1])
-    holdings.to_csv(outdir,header = True,index=False)
+    return holdings
+    #holdings.to_csv(outdir,header = True,index=False)
 
 
 
@@ -97,9 +102,6 @@ if __name__ == '__main__':
     db = 'holdingdb'
     dividend = 'dividendfiles'
 
-    date = str(dt.datetime.strftime(dt.date.today(),'%Y%m%d'))
-    #inputdate = dt.datetime(2017,5,4,17,0,0)
-
     products = ['bq1','bq2','jq1','hj1','gd2','ls1']
     textvars = {'bq1': ('备注','股东代码','证券代码','证券名称','资金帐号'),
                 'bq2': ('股东代码','证券代码','证券名称'),
@@ -108,20 +110,43 @@ if __name__ == '__main__':
                 'gd2': ('股东代码','证券代码','证券名称'),
                 'ls1': ('产品名称','到期日','股东账号','账号名称','证券代码','证券名称','状态','资金账号')
                 }
-    divfile = os.path.join(basepath,dividend,'dividend_'+date+'.txt')
+    tempprc = 5827.2
+    futinfo = { 'bq1': {'init_cash': 2422705.78,
+                        'IC1705.CFE': { 'settle': tempprc, 'trdside': -1,'multiplier': 200, 'enterprc':np.array([0]),'enternum':np.array([0]) } },
+                'bq2': {'init_cash': 3836931.33,
+                        'IC1705.CFE': { 'settle': tempprc, 'trdside': -1,'multiplier': 200, 'enterprc':np.array([0]),'enternum':np.array([0]) } },
+                'gd2': {'init_cash': 3801111.89,
+                        'IC1705.CFE': { 'settle': tempprc, 'trdside': -1,'multiplier': 200, 'enterprc':np.array([0]),'enternum':np.array([0]) } },
+                'ls1': {'init_cash': 7176477.31,
+                        'IC1705.CFE': { 'settle': tempprc, 'trdside': -1,'multiplier': 200, 'enterprc':np.array([5827.2]),'enternum':np.array([4]) } }
+               }
 
+
+    date = str(dt.datetime.strftime(dt.date.today(),'%Y%m%d'))
+    divfile = os.path.join(basepath,dividend,'dividend_'+date+'.txt')
     newfiletoday = os.path.join(basepath,date)
     if not os.path.exists(newfiletoday):
         os.mkdir(newfiletoday)
     print(newfiletoday)
+
     for p in products:
         rawfile = os.path.join(basepath,raw,p,p+'_'+date+'.csv')
         rawdb = os.path.join(basepath,db,p+'.db')
-        obj = database.ClientToDatabase(rawdb,p)
-        # # obj.set_holdtbname(inputdate=inputdate)
+        obj = holding_generate.ClientToDatabase(rawdb,p)
+        #inputdate = dt.datetime(2017,5,4,17,0,0)
+        #obj.set_holdtbname(inputdate=inputdate)
+
         obj.holdlist_to_db(rawfile,textvars[p],currencymark='币种',codemark='证券代码',replace=True)
+
+        holdings = take_holding_fmt(dbdir=rawdb,divdir=divfile,product=p,date=date)
+        fut = futinfo.get(p)
+        if fut:
+            futholding = holding_generate.futures_gen(date,fut,outputfmt='for_calcdiv')['cashinfo']
+            holdings = holdings.append(futholding,ignore_index=True)
+
         outfile = os.path.join(basepath,newfile,p, p+'_'+date+'.csv')
-        take_holding_fmt(dbdir=rawdb,divdir=divfile,product=p,date=date,outdir=outfile)
+        holdings.to_csv(outfile,header = True,index=False)
         os.system ("copy %s %s" % (outfile, os.path.join(newfiletoday,p+'_'+date+'.csv')))
+        #obj.holdlist_format(['证券代码','证券名称','可用股份','当前价'],r'C:\Users\Jiapeng\Desktop\test.csv')
 
 
