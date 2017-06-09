@@ -6,35 +6,18 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 
+from remotewind import w
 import holding_generate
+
+sys.path.append(r'E:\realtime_monitors\realtime_returns\src\database_assistant')
+import database_assistant
+
+
+
 
 def take_holding_fmt(dbdir,divdir,product,date):
     # 提取分红数据
-    with open(divfile,'r') as df:
-        stkcd = []
-        share = []
-        cash = []
-        for f in df.readlines():
-            temp = f.split()
-            cd = re.search('[\d]{6}',temp[0]).group()
-            if cd[0] in ('0','3'):
-                stkcd.append(cd+'.SZ')
-            else:
-                stkcd.append(cd+'.SH')
-            match = re.search('转[\d]*股',temp[1])
-            if match is None:
-                shr = 0
-            else:
-                shr = re.search('[\d]+',match.group()).group()
-            share.append(shr)
-
-            match2 = re.search('派[\.\d]+元',temp[1])
-            if match2 is None:
-                ch = 0
-            else:
-                ch = re.search('[\.\d]+',match2.group()).group()
-            cash.append(ch)
-    div = pd.DataFrame({'stkcd':stkcd, 'share':share, 'cash':cash})
+    div = get_divinfo(divdir=divdir)
 
     # 提取持仓数据
     with holding_generate.DatabaseConnect(dbdir) as conn:
@@ -48,6 +31,8 @@ def take_holding_fmt(dbdir,divdir,product,date):
             outtitle = ('证券代码','参考持股','当前价')
         elif ('证券代码' in cols) and ('当前拥股' in cols) and ('最新价' in cols):
             outtitle = ('证券代码','当前拥股','最新价')
+        elif ('证券代码' in cols) and ('实际数量' in cols) and ('当前价' in cols):
+            outtitle = ('证券代码','实际数量','当前价')
         else:
             outtitle = ('证券代码','证券数量','当前价')
         exeline = ''.join(['SELECT ',','.join(outtitle),' FROM ',tablename+'_afternoon'])
@@ -56,7 +41,10 @@ def take_holding_fmt(dbdir,divdir,product,date):
         if product == 'ls1':
             asset = float( open(''.join([r'E:\calc_dividend\holding_gen\ls1_value_',date,'.txt'])).readline())
         elif product == 'bq1':
-            asset = float( open(''.join([r'E:\calc_dividend\holding_gen\bq1_value_',date,'.txt'])).readline())
+            #asset = float( open(''.join([r'E:\calc_dividend\holding_gen\bq1_value_',date,'.txt'])).readline())
+            exeline = ''.join(['SELECT 可用,参考市值 FROM ',tablename+'_afternoon_summary'])
+            values = conn.execute(exeline).fetchall()
+            asset = np.sum(values[0])
         else:
             exeline = ''.join(['SELECT 资产 FROM ',tablename+'_afternoon_summary'])
             asset = conn.execute(exeline).fetchall()[0][0]
@@ -76,7 +64,7 @@ def take_holding_fmt(dbdir,divdir,product,date):
     # 逆回购 理财产品等
     refound_sz = ['131810','131811','131800','131809','131801','131802','131803','131805','131806']
     refound_sh = ['204001','204007','204002','204003','204004','204014','204028','204091','204182']
-    other_vars = ['131990','888880','SHRQ88','SHXGED','SZRQ88','SZXGED']
+    other_vars = ['131990','888880','SHRQ88','SHXGED','SZRQ88','SZXGED','511990']
     tofilter = refound_sz+refound_sh+other_vars
     holdings = holdings[~ holdings['stkcd'].isin(tofilter)]
     holdings = holdings[holdings['num']>0]
@@ -95,6 +83,9 @@ def take_holding_fmt(dbdir,divdir,product,date):
 
 
 if __name__ == '__main__':
+
+    today = dt.date.today().strftime('%Y%m%d')
+
     basepath = r'E:\calc_dividend\holding_gen'
     raw = 'rawholding'
     file = 'holdingfiles'
@@ -102,23 +93,29 @@ if __name__ == '__main__':
     db = 'holdingdb'
     dividend = 'dividendfiles'
 
-    products = ['bq1','bq2','jq1','hj1','gd2','ls1']
+    products = ['bq1','bq2','jq1','hj1','gd2','ls1','xy7']
     textvars = {'bq1': ('备注','股东代码','证券代码','证券名称','资金帐号'),
                 'bq2': ('股东代码','证券代码','证券名称'),
                 'jq1': ('股东代码','证券代码','证券名称'),
                 'hj1': ('股东代码','证券代码','证券名称'),
                 'gd2': ('股东代码','证券代码','证券名称'),
-                'ls1': ('产品名称','到期日','股东账号','账号名称','证券代码','证券名称','状态','资金账号')
+                'ls1': ('产品名称','到期日','股东账号','账号名称','证券代码','证券名称','状态','资金账号'),
+                'xy7': ('股东代码','证券代码','证券名称','交易所名称')
                 }
-    tempprc = 5827.2
-    futinfo = { 'bq1': {'init_cash': 2422705.78,
-                        'IC1705.CFE': { 'settle': tempprc, 'trdside': -1,'multiplier': 200, 'enterprc':np.array([0]),'enternum':np.array([0]) } },
-                'bq2': {'init_cash': 3836931.33,
-                        'IC1705.CFE': { 'settle': tempprc, 'trdside': -1,'multiplier': 200, 'enterprc':np.array([0]),'enternum':np.array([0]) } },
-                'gd2': {'init_cash': 3801111.89,
-                        'IC1705.CFE': { 'settle': tempprc, 'trdside': -1,'multiplier': 200, 'enterprc':np.array([0]),'enternum':np.array([0]) } },
-                'ls1': {'init_cash': 7176477.31,
-                        'IC1705.CFE': { 'settle': tempprc, 'trdside': -1,'multiplier': 200, 'enterprc':np.array([5827.2]),'enternum':np.array([4]) } }
+
+
+    settleprc = w.wsd('IC1706.CFE','settle',).Data[0][0]
+    print(settleprc)
+    futinfo = {'bq1':{'tot_value': 2235598.22 ,
+                      'IC1706.CFE': { 'settle': settleprc, 'trdside': -1,'multiplier': 200,'holdnum':np.array([2]) } },
+               'bq2':{'tot_value': 3910775.24 ,
+                      'IC1706.CFE': { 'settle': settleprc, 'trdside': -1,'multiplier': 200,'holdnum':np.array([4]) } },
+               'gd2' :{'tot_value': 3893882.86,
+                       'IC1706.CFE': { 'settle': settleprc, 'trdside': -1,'multiplier': 200, 'holdnum':np.array([4]) } },
+               'ls1' :{'tot_value': 8697636.87,
+                        'IC1706.CFE': { 'settle': settleprc, 'trdside': -1,'multiplier': 200, 'holdnum':np.array([8]) } },
+               'xy7' :{'tot_value': 4279250.46,
+                       'IC1706.CFE': { 'settle': settleprc, 'trdside': -1,'multiplier': 200, 'holdnum':np.array([6]) } }
                }
 
 
@@ -126,13 +123,14 @@ if __name__ == '__main__':
     divfile = os.path.join(basepath,dividend,'dividend_'+date+'.txt')
     newfiletoday = os.path.join(basepath,date)
     if not os.path.exists(newfiletoday):
+
         os.mkdir(newfiletoday)
     print(newfiletoday)
 
     for p in products:
         rawfile = os.path.join(basepath,raw,p,p+'_'+date+'.csv')
         rawdb = os.path.join(basepath,db,p+'.db')
-        obj = holding_generate.ClientToDatabase(rawdb,p)
+        obj = holding_generate.ClientToDatabase(rawdb,'',p)
         #inputdate = dt.datetime(2017,5,4,17,0,0)
         #obj.set_holdtbname(inputdate=inputdate)
 
@@ -141,12 +139,12 @@ if __name__ == '__main__':
         holdings = take_holding_fmt(dbdir=rawdb,divdir=divfile,product=p,date=date)
         fut = futinfo.get(p)
         if fut:
-            futholding = holding_generate.futures_gen(date,fut,outputfmt='for_calcdiv')['cashinfo']
+            futholding = holding_generate.futures_holding(date,fut,outputfmt='for_calcdiv')['cashinfo']
             holdings = holdings.append(futholding,ignore_index=True)
 
         outfile = os.path.join(basepath,newfile,p, p+'_'+date+'.csv')
         holdings.to_csv(outfile,header = True,index=False)
         os.system ("copy %s %s" % (outfile, os.path.join(newfiletoday,p+'_'+date+'.csv')))
-        #obj.holdlist_format(['证券代码','证券名称','可用股份','当前价'],r'C:\Users\Jiapeng\Desktop\test.csv')
+        os.system ("copy %s %s" % (outfile, os.path.join(r'\\JASONCHEN-PC\Positions','Positions'+date,p+'_'+date+'.csv')))  # 推送
 
 
