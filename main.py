@@ -12,9 +12,15 @@ from products_configures import *
 
 
 if __name__ == '__main__':
+    today_dt = dt.datetime.today()
+    today = today_dt.strftime('%Y%m%d')
+    #today = '20170616'
 
+    #divdir = os.path.join(basepath,dividend,'dividend_'+today+'.txt')
+    divdir = os.path.join(basepath,dividend,'psz_'+today+'.csv')
+    newfiletoday = os.path.join(basepath,today)
 
-    products = ['bq1','bq2','jq1','hj1','gd2','ls1','xy7']
+    products = ['bq1','bq2','bq3','jq1','hj1','gd2','ls1','xy7']
 
     if not os.path.exists(newfiletoday):
         os.mkdir(newfiletoday)
@@ -42,9 +48,11 @@ if __name__ == '__main__':
         obj = product_info(dbdir=rawdb,divdir=divdir,product=p,title_hold=holdvars[p],title_asset=assetvars[p],textvars=textvars[p],cwdir=cwd,logdir=logd)
         obj.stkhold_to_db(rawfiledir=rawfile,date=today)
         holdings = obj.get_holding_stk(date=today,othersource=othersource)
+
         if hasfut:
             holdfut = obj.get_holding_fut(date=today)
             holdings = pd.concat([holdings,holdfut],axis=0,ignore_index=True)
+
         holdings.to_csv(outfile,header = True,index=False)
 
         os.system ("copy %s %s" % (outfile, os.path.join(newfiletoday,p+'_'+today+'.csv')))

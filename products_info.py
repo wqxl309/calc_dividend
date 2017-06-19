@@ -83,33 +83,45 @@ class product_info:
                 print('Table '+tablename+' cannot read the main body, nothing writen !')
 
 
-    def get_divinfo(self):
+    def get_divinfo(self,sourcetype = 'bydb'):
         """ 提取分红数据 """
-        with open(self._divdir,'r') as df:
-            stkcd = []
-            share = []
-            cash = []
-            for f in df.readlines():
-                temp = f.split()
-                cd = re.search('[\d]{6}',temp[0]).group()
-                stkcd.append(cd)
-                # if cd[0] in ('0','3'):
-                #     stkcd.append(cd+'.SZ')
-                # else:
-                #     stkcd.append(cd+'.SH')
-                match = re.search('转[\d]*股',temp[1])
-                if match is None:
-                    shr = 0
-                else:
-                    shr = re.search('[\d]+',match.group()).group()
-                share.append(shr)
-                match2 = re.search('派[\.\d]+元',temp[1])
-                if match2 is None:
-                    ch = 0
-                else:
-                    ch = re.search('[\.\d]+',match2.group()).group()
-                cash.append(ch)
-        div = pd.DataFrame({'stkcd':stkcd, 'share':share, 'cash':cash})
+        if sourcetype=='byhand':
+            with open(self._divdir,'r') as df:
+                stkcd = []
+                share = []
+                cash = []
+                for f in df.readlines():
+                    temp = f.split()
+                    cd = re.search('[\d]{6}',temp[0]).group()
+                    stkcd.append(cd)
+                    # if cd[0] in ('0','3'):
+                    #     stkcd.append(cd+'.SZ')
+                    # else:
+                    #     stkcd.append(cd+'.SH')
+                    match = re.search('转[\d]*股',temp[1])
+                    if match is None:
+                        shr = 0
+                    else:
+                        shr = re.search('[\d]+',match.group()).group()
+                    share.append(shr)
+                    match2 = re.search('派[\.\d]+元',temp[1])
+                    if match2 is None:
+                        ch = 0
+                    else:
+                        ch = re.search('[\.\d]+',match2.group()).group()
+                    cash.append(ch)
+            div = pd.DataFrame({'stkcd':stkcd, 'share':share, 'cash':cash})
+        elif sourcetype=='bydb':
+            divdata = pd.read_csv(self._divdir)
+            divdata = divdata.fillna(0)
+            def fix_off(x):
+                return x.split('.')[0]
+            stkcd = divdata['hsStockCode'].map(fix_off)
+            share = divdata['hfEESongPerTen']+divdata['hfEEZhuanPerTen']
+            cash = divdata['hfEEPaiPerTen']
+            div = pd.concat([stkcd,share,cash],ignore_index=True,axis=1)
+            div.columns = ['stkcd','share','cash']
+            div = div.sort_values(by=['stkcd'],ascending=[1])
         return div
 
     def stk_holdinfo(self,date=None):
@@ -120,7 +132,7 @@ class product_info:
             tablename = '_'.join([self._product,'stocks',date])
             exeline = ''.join(['SELECT ',','.join(self._title_hold),' FROM ',tablename])
             holdings = pd.read_sql(exeline,conn)
-            holdings.columns = ['stkcd','num','prc']
+            holdings.columns = ['stkcd','num','prenum','prc']
         return holdings
 
     def stk_asset(self,date=None,othersource=None):
@@ -148,17 +160,13 @@ class product_info:
         shape = holdings.shape
         idx1 = holdings['stkcd'].isin(div['stkcd'])
         idx2 = div['stkcd'].isin(holdings['stkcd'])
-        tempval = np.zeros([shape[0],shape[1]-1])
+        tempval = np.zeros([shape[0],shape[1]-2])
         tempval[idx1.values,:] = div.loc[idx2.tolist(),['cash','share']].values
-        # holdings.insert(0,'date',np.ones([shape[0],1])*int(date))
-        # holdings.insert(shape[1],'cash',tempval[:,0])
-        # holdings.insert(shape[1]+1,'share',tempval[:,1])
         holdings['date'] = date
-        holdings['cash'] = tempval[:,0]
+        #holdings['cash'] = tempval[:,0]
         holdings['share'] = tempval[:,1]
-        holdings = holdings[['date','stkcd','num','cash','share','prc']]
-        #holdings['cash'] = holdings['cash']*holdings['num']/10
-        #holdings['share'] = holdings['share']*holdings['num']/10
+        holdings['num'] = holdings['num'] + holdings['share']*holdings['prenum']/10
+        holdings = holdings[['date','stkcd','num','prc']]
         # 剔除非股票持仓和零持仓代码
         # 逆回购 理财产品等
         refound_sz = ['131810','131811','131800','131809','131801','131802','131803','131805','131806']
@@ -169,40 +177,31 @@ class product_info:
         holdings = holdings[holdings['num']>0]
         # 计算现金量
         cashamt = (asset - np.sum(holdings['num']*holdings['prc'])) * 0.95  # 保留5%
-        temp = [[date,'999156',cashamt,0,0,1]]
-        holdings = pd.concat([holdings,pd.DataFrame(temp,columns=['date','stkcd','num','cash','share','prc'])],ignore_index=True)
+        temp = [[date,'999156',cashamt,1]]
+        holdings = pd.concat([holdings,pd.DataFrame(temp,columns=['date','stkcd','num','prc'])],ignore_index=True)
         holdings['stkcd'] = holdings['stkcd'].map(lambda x : float(x))
         # 转换代码类型并排序
         holdings = holdings.sort_values(by=['stkcd'],ascending=[1])
         return holdings
 
 
-    def get_holding_fut(self,date=None,cttype = 'IC',prctype='settle',margin=0.3):
+    def get_holding_fut(self,prctype='settle',margin=0.3,date=None,cttype = 'IC'):
+        w.start()
         if date is None:
             date = dt.date.today().strftime('%Y%m%d')
-        futobj = rhp.rawholding_futures(hold_dbdir=self._dbdir,pofname=self._product,logdir=self._logdir,cwdir=self._cwdir,side = -1)
-        thedate = dt.date(year=int(date[0:4]),month=int(date[4:6]),day=int(date[6:8]))
-        contract = futobj.get_near1_contract(cttype=cttype,date=thedate)
-        prc = w.wsd(contract+'.CFE',prctype,date,date).Data[0][0]
-        num = futobj.get_holdnum(date=date)
-        mult = futobj._multiplier[cttype]
-        asset = futobj.get_totval(date=date,cttype = cttype,prctype=prctype)
-        cash = asset - num*mult*prc*(margin+0.1)
-        vals = [date,'999157',cash,0,0,1]
-        holding = pd.DataFrame([vals],columns=['date','stkcd','num','cash','share','prc'])
+        cashkeep = 0
+        diffval = 0
+        for ct in self._cwdir:
+            futobj = rhp.rawholding_futures(hold_dbdir=self._dbdir,pofname=self._product,logdir=self._logdir[ct],cwdir=self._cwdir[ct],side = -1)
+            thedate = dt.date(year=int(date[0:4]),month=int(date[4:6]),day=int(date[6:8]))
+            contract = futobj.get_contracts_ours(date=thedate,cttype=cttype)[ct]
+            prc = w.wsd(contract+'.CFE',prctype,date,date).Data[0][0]
+            num = futobj.get_holdnum(date=date)
+            mult = futobj._multiplier[cttype]
+            asset_info = futobj.get_totval(date=thedate,prctype=prctype,cttype = cttype,ctmon=ct)
+            diffval += asset_info['settle_close_diff']
+            cashkeep += num*mult*prc*(margin+0.1)
+        cash = asset_info['total_close']+diffval - cashkeep  # 在同一产品不同策略使用统一期货账户的情况下
+        vals = [date,'999157',cash,1]
+        holding = pd.DataFrame([vals],columns=['date','stkcd','num','prc'])
         return holding
-
-
-if __name__ =='__main__':
-    dbdir = r'C:\Users\Jiapeng\Desktop\test.db'
-    product = 'bq1'
-    title_hold = ('证券代码','参考持股','当前价')
-    title_asset = ('可用','参考市值')
-    textvars = ('备注','股东代码','证券代码','证券名称','资金帐号')
-    cwdir = r'\\BQ1_ICHEDGE\cwstate'
-    logdir = r'\\BQ1_ICHEDGE\blog'
-    divdir = r'E:\calc_dividend\holding_gen\dividendfiles\dividend_20170608.txt'
-
-    t = product_info(dbdir=dbdir,divdir=divdir,product=product,title_hold=title_hold,title_asset=title_asset,textvars=textvars,cwdir=cwdir,logdir=logdir)
-    #t.stkhold_to_db(rawfiledir = r'E:\calc_dividend\holding_gen\rawholding\bq1\bq1_20170608.csv')
-    print(t.get_holding_fut(date='20170608'))

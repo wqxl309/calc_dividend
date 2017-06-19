@@ -1,7 +1,7 @@
-from urllib import request
 
-#response = request.urlopen(r'http://stock.10jqka.com.cn/fhspxx_list/')
-response = request.urlopen(r'http://stock.10jqka.com.cn/20170602/c598751405.shtml')
 
-page = response.read()
-print(page)
+from WindPy import w
+
+w.start()
+
+print(w.wsd('000001.SH','close,trade_status,susp_reason','20170101','20170619'))
