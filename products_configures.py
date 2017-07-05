@@ -59,8 +59,3 @@ cwdir = {
 }
 
 
-if __name__=='__main__':
-    dir = r'E:\calc_dividend\holding_gen\dividendfiles\psz_20170615.csv'
-    t = pd.read_csv(dir)
-    t=t.fillna(0)
-    print(t)

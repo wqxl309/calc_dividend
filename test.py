@@ -1,7 +1,7 @@
+from gmsdk import md
 
+md.init('18201141877','Wqxl7309')
 
-from WindPy import w
+dbar = md.get_dailybars('CFFEX.IC1707','20170620','20170620')
 
-w.start()
-
-print(w.wsd('000001.SH','close,trade_status,susp_reason','20170101','20170619'))
+print(dbar)

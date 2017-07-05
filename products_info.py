@@ -64,7 +64,6 @@ class product_info:
                         #寻找正表标题
                         if codemark in line:
                             titles = line
-                            codepos = titles.index(codemark)
                             titlecheck = dbass.db_assistant.gen_table_titles(titles,{'TEXT':self._textvars})
                             titletrans = titlecheck['typed_titles']
                             # title_empty = titlecheck['empty_pos']   # 此处尤其暗藏风险，假设正表数据没有空列
@@ -184,24 +183,22 @@ class product_info:
         holdings = holdings.sort_values(by=['stkcd'],ascending=[1])
         return holdings
 
-
-    def get_holding_fut(self,prctype='settle',margin=0.3,date=None,cttype = 'IC'):
+    def get_holding_fut(self,date=None,prctype='settle',margin=0.3):
         w.start()
         if date is None:
-            date = dt.date.today().strftime('%Y%m%d')
-        cashkeep = 0
-        diffval = 0
-        for ct in self._cwdir:
-            futobj = rhp.rawholding_futures(hold_dbdir=self._dbdir,pofname=self._product,logdir=self._logdir[ct],cwdir=self._cwdir[ct],side = -1)
-            thedate = dt.date(year=int(date[0:4]),month=int(date[4:6]),day=int(date[6:8]))
-            contract = futobj.get_contracts_ours(date=thedate,cttype=cttype)[ct]
-            prc = w.wsd(contract+'.CFE',prctype,date,date).Data[0][0]
-            num = futobj.get_holdnum(date=date)
-            mult = futobj._multiplier[cttype]
-            asset_info = futobj.get_totval(date=thedate,prctype=prctype,cttype = cttype,ctmon=ct)
-            diffval += asset_info['settle_close_diff']
-            cashkeep += num*mult*prc*(margin+0.1)
-        cash = asset_info['total_close']+diffval - cashkeep  # 在同一产品不同策略使用统一期货账户的情况下
-        vals = [date,'999157',cash,1]
+            date = dt.date.today()
+        futobj = rhp.rawholding_futures(hold_dbdir=self._dbdir,pofname=self._product,logdir=self._logdir,cwdir=self._cwdir)
+        holding = futobj.holdlist_format(date=date,prctype=prctype,preday=False)
+        holding['val'] = holding['num']*holding['prc']*holding['multi']
+        totval = futobj.get_totval(date=date,prctype=prctype)
+        cashkeep = np.sum(np.abs(holding['val']*(margin+0.1)))
+        cash = totval - cashkeep
+        vals = [date.strftime('%Y%m%d'),'999157',cash,1]
         holding = pd.DataFrame([vals],columns=['date','stkcd','num','prc'])
         return holding
+
+
+if __name__=='__main__':
+    conn = sqlite3.connect(r'E:\calc_dividend\holding_gen\holdingdb\calcdiv_ls1.db')
+    c = conn.cursor()
+    print( c.execute('SELECT 当前拥股,可用数量 FROM ls1_stocks_20170704').fetchall() )
