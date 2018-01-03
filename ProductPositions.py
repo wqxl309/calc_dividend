@@ -105,7 +105,12 @@ class ProductPositions:
             holdings = holdings.sort_values(by=['stkcd'],ascending=[1])
         return holdings.loc[:,['date','stkcd','num','prc']]
 
-    def get_holding_fut(self,date=None,margin=0.3):
+    def get_holding_fut(self,date=None):
+        def margin(ct):
+            dict = {'91':0.15,'92':0.3,'93':0.15}
+            mgn = dict.get(ct[:2])
+            mgn = mgn if mgn is not None else 1
+            return mgn
         if date is None:
             date = dt.date.today()
         datestr = date.strftime('%Y%m%d')
@@ -126,9 +131,10 @@ class ProductPositions:
             nonfutidx = posifut['stkcd'].isin(['999997'])
             totsettle = posifut[nonfutidx]
             purefutures = posifut[~nonfutidx].copy()
-            purefutures.loc[:,['num']] = purefutures['num'].abs() *purefutures['multi']*margin
+            purefutures.loc[:,['num']] = purefutures['num'].abs() *purefutures['multi']
             purefutures.drop('multi',axis=1,inplace=True)
             purefutures = purefutures[purefutures['num']>0]
+            purefutures['num'] = purefutures['num']*purefutures['stkcd'].map(margin)
             futval = sum(purefutures['num']*purefutures['prc'])
             cashamt = totsettle['num']*totsettle['prc'] - futval
             if self._prodname in ('ls1','bq1','gd2'):
@@ -141,11 +147,3 @@ class ProductPositions:
             holdings = purefutures.append(cashpd,ignore_index=True)
             holdings['stkcd'] = holdings['stkcd'].astype(float)
         return holdings.loc[:,['date','stkcd','num','prc']]
-
-
-if __name__=='__main__':
-    sdb = r'E:\Baiquan_Positions\data\positions_database\BaiQuan1_standard_tables.db'
-    ddb = r'E:\calc_dividend\holding_gen\dividendfiles'
-    obj = ProductInfo(prodcode='BaiQuan1',prodname='test',stddbdir=sdb,divdir=ddb)
-    print(obj.get_holding_stk(date=dt.datetime(2017,9,21)))
-    print(obj.get_holding_fut(date=dt.datetime(2017,9,21)))
